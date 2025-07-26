@@ -1,36 +1,43 @@
 import os
 import telebot
+import ydb
 import ydb.iam
 import json
 from flask import Flask, request
 from telebot import types
 
-# --- Настройки (без изменений) ---
+# --- Настройки ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 YDB_ENDPOINT = os.environ.get('YDB_ENDPOINT')
 YDB_DATABASE = os.environ.get('YDB_DATABASE')
 PORT = int(os.environ.get('PORT', 8080))
-SERVICE_ACCOUNT_KEY_JSON = os.environ.get('SERVICE_ACCOUNT_KEY_JSON') 
+# --- Новые переменные ---
+SA_ID = os.environ.get('SA_ID')
+SA_KEY_ID = os.environ.get('SA_KEY_ID')
+SA_PRIVATE_KEY = os.environ.get('SA_PRIVATE_KEY')
 
 # --- Инициализация ---
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# --- Работа с YDB (ФИНАЛЬНАЯ ВЕРСИЯ АУТЕНТИФИКАЦИИ) ---
 def get_ydb_driver():
-    # --- ИЗМЕНЕНИЕ v4.2: 100% правильный способ из документации ---
-    credentials = ydb.iam.ServiceAccountCredentials.from_str(SERVICE_ACCOUNT_KEY_JSON)
-    
+    # Создаем credentials из отдельных компонентов. Это самый базовый способ.
+    credentials = ydb.iam.ServiceAccountCredentials(
+        access_key_id=SA_KEY_ID,
+        service_account_id=SA_ID,
+        private_key=SA_PRIVATE_KEY.encode('utf-8') # Ключ нужно передавать в байтах
+    )
     return ydb.Driver(
         endpoint=YDB_ENDPOINT,
         database=YDB_DATABASE,
         credentials=credentials
     )
 
+# execute_ydb_query остается таким же, как в v4.2
 def execute_ydb_query(query, params):
     driver = get_ydb_driver()
     driver.wait(timeout=5)
-    
-    # Новый, более простой способ работы с сессией
     with ydb.SessionPool(driver) as pool:
         return pool.retry_operation_sync(
             lambda session: session.transaction().execute(
@@ -40,9 +47,7 @@ def execute_ydb_query(query, params):
             )
         )
 
-# ... (Остальной код бота НИКАК НЕ МЕНЯЕТСЯ) ...
-
-# --- Веб-сервер и Вебхук ---
+# --- Веб-сервер и обработчики ---
 @app.route('/', methods=['POST'])
 def webhook():
     json_str = request.get_data().decode('utf-8')
@@ -50,24 +55,20 @@ def webhook():
     bot.process_new_updates([update])
     return 'ok', 200
 
-# --- Главная логика бота ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на Render V4! Финальная версия. Пытаюсь записать в базу...")
+    bot.reply_to(message, "Я на Render V5. Атомная аутентификация. Пробую...")
     try:
-        # Для новой библиотеки YDB нужно явно указывать тип параметра
-        query = """
-            DECLARE $telegram_id AS Uint64;
-            UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 4000);
-        """
-        # Создаем типизированный параметр
+        query = "DECLARE $telegram_id AS Uint64; UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 5000);"
         param_type = ydb.PrimitiveType.Uint64
         params = {'$telegram_id': ydb.TypedValue(int(message.from_user.id), param_type)}
-
         execute_ydb_query(query, params)
-        bot.send_message(message.chat.id, "Тестовая запись V4 прошла успешно!")
+        bot.send_message(message.chat.id, "ЗАПИСЬ V5 ПРОШЛА УСПЕШНО!")
     except Exception as e:
-        bot.send_message(message.chat.id, f"Ошибка V4 при записи в базу: {e}")
+        # Выводим максимально подробную ошибку
+        import traceback
+        error_text = traceback.format_exc()
+        bot.send_message(message.chat.id, f"Ошибка V5: {e}\n\n{error_text}")
 
 # --- Запуск ---
 if __name__ == '__main__':
