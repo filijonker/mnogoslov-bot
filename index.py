@@ -1,6 +1,6 @@
 import os
 import telebot
-import ydb # --- ИЗМЕНЕНИЕ: Простой импорт ---
+import ydb.iam
 import json
 from flask import Flask, request
 from telebot import types
@@ -17,11 +17,13 @@ bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 def get_ydb_driver():
-    # --- ИЗМЕНЕНИЕ: Правильный способ аутентификации для нового SDK ---
+    # --- ИЗМЕНЕНИЕ v4.2: 100% правильный способ из документации ---
+    credentials = ydb.iam.ServiceAccountCredentials.from_str(SERVICE_ACCOUNT_KEY_JSON)
+    
     return ydb.Driver(
         endpoint=YDB_ENDPOINT,
         database=YDB_DATABASE,
-        credentials=ydb.credentials_from_str(SERVICE_ACCOUNT_KEY_JSON)
+        credentials=credentials
     )
 
 def execute_ydb_query(query, params):
