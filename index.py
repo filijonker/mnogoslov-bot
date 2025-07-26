@@ -1,36 +1,50 @@
 import os
 import telebot
-import ydb
+# --- ИЗМЕНЕНИЕ: Импортируем компоненты по полному пути ---
+from yandex.cloud.ydb import (
+    Ydb,
+    Driver,
+    DriverConfig,
+    construct_credentials_from_service_account_key,
+)
+import json
 from flask import Flask, request
 from telebot import types
 
-# --- Настройки ---
+# --- Настройки (без изменений) ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 YDB_ENDPOINT = os.environ.get('YDB_ENDPOINT')
 YDB_DATABASE = os.environ.get('YDB_DATABASE')
 PORT = int(os.environ.get('PORT', 8080))
-# URL для установки вебхука. Мы его получим от Яндекса.
-# Но для безопасности лучше передавать его тоже через переменную окружения.
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL') 
+SERVICE_ACCOUNT_KEY_JSON = os.environ.get('SERVICE_ACCOUNT_KEY_JSON') 
 
 # --- Инициализация ---
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Работа с YDB (как мы и планировали) ---
+# --- Работа с YDB (с изменениями) ---
+def get_ydb_driver():
+    # Используем импортированные функции
+    credentials = construct_credentials_from_service_account_key(SERVICE_ACCOUNT_KEY_JSON)
+    driver_config = DriverConfig(
+        endpoint=YDB_ENDPOINT,
+        database=YDB_DATABASE,
+        credentials=credentials
+    )
+    return Driver(driver_config)
+
 def execute_ydb_query(query, params):
-    driver = ydb.Driver(endpoint=YDB_ENDPOINT, database=YDB_DATABASE)
+    driver = get_ydb_driver()
     driver.wait(timeout=5)
-    pool = ydb.SessionPool(driver)
-    
-    def execute_in_pool(session):
-        prepared_query = session.prepare(query)
-        session.transaction(ydb.SerializableReadWrite()).execute(
-            prepared_query,
-            params,
-            commit_tx=True
-        )
-    return pool.retry_operation_sync(execute_in_pool)
+    # --- ИЗМЕНЕНИЕ: Используем with, это более надежно ---
+    with Driver(get_ydb_driver().endpoint, get_ydb_driver().database, get_ydb_driver().credentials) as driver:
+       with Ydb(driver) as ydb_client:
+          session = ydb_client.table_client.session().create()
+          prepared_query = session.prepare(query)
+          session.transaction().execute(prepared_query, params, commit_tx=True)
+
+
+# ... (Остальной код бота, вебхука и обработчиков остается таким же, как в прошлый раз) ...
 
 # --- Веб-сервер и Вебхук ---
 @app.route('/', methods=['POST'])
@@ -41,35 +55,25 @@ def webhook():
     return 'ok', 200
 
 # --- Главная логика бота ---
-# Мы вернем сюда всю нашу сложную логику, когда убедимся,
-# что бот запускается в контейнере.
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    # Просто тестовый ответ для проверки
-    bot.reply_to(message, "Я в контейнере V2.0! И я живой! База данных подключена.")
-    
-    # Попытка записать что-то в базу для проверки
+    bot.reply_to(message, "Я на Render V3! Пытаюсь записать в базу...")
     try:
         query = """
             DECLARE $telegram_id AS Uint64;
-            UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 100);
+            UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 3000);
         """
-        params = {'$telegram_id': message.from_user.id}
+        params = {'$telegram_id': int(message.from_user.id)}
         execute_ydb_query(query, params)
-        bot.send_message(message.chat.id, "Тестовая запись в базу данных прошла успешно!")
+        bot.send_message(message.chat.id, "Тестовая запись V3 прошла успешно!")
     except Exception as e:
-        bot.send_message(message.chat.id, f"Ошибка при записи в базу: {e}")
+        bot.send_message(message.chat.id, f"Ошибка V3 при записи в базу: {e}")
 
 # --- Запуск ---
 if __name__ == '__main__':
-    print("Бот запускается...")
-    # Устанавливаем вебхук при старте
-    bot.remove_webhook()
-    # Важно! Убедитесь, что WEBHOOK_URL установлен в переменных окружения контейнера
+    WEBHOOK_URL = f"{os.environ.get('RENDER_EXTERNAL_URL')}"
     if WEBHOOK_URL:
+        bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
         print(f"Вебхук установлен на {WEBHOOK_URL}")
-    else:
-        print("Переменная WEBHOOK_URL не установлена, вебхук не настроен.")
-        
     app.run(host='0.0.0.0', port=PORT)
