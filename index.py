@@ -57,18 +57,17 @@ def webhook():
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на Render V5. Атомная аутентификация. Пробую...")
+    bot.reply_to(message, "Я на Render V6. Проверяю интернет...")
     try:
-        query = "DECLARE $telegram_id AS Uint64; UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 5000);"
-        param_type = ydb.PrimitiveType.Uint64
-        params = {'$telegram_id': ydb.TypedValue(int(message.from_user.id), param_type)}
-        execute_ydb_query(query, params)
-        bot.send_message(message.chat.id, "ЗАПИСЬ V5 ПРОШЛА УСПЕШНО!")
+        # Пытаемся достучаться до Google
+        response = requests.get("https://www.google.com", timeout=10)
+        if response.status_code == 200:
+            bot.send_message(message.chat.id, "Интернет есть! Google ответил. Проблема точно в порте к YDB.")
+        else:
+            bot.send_message(message.chat.id, f"Google ответил странно: {response.status_code}")
+
     except Exception as e:
-        # Выводим максимально подробную ошибку
-        import traceback
-        error_text = traceback.format_exc()
-        bot.send_message(message.chat.id, f"Ошибка V5: {e}\n\n{error_text}")
+        bot.send_message(message.chat.id, f"Ошибка при проверке интернета: {e}")
 
 # --- Запуск ---
 if __name__ == '__main__':
