@@ -1,12 +1,6 @@
 import os
 import telebot
-# --- ИЗМЕНЕНИЕ: Импортируем компоненты по полному пути ---
-from yandex.cloud.ydb import (
-    Ydb,
-    Driver,
-    DriverConfig,
-    construct_credentials_from_service_account_key,
-)
+import ydb # --- ИЗМЕНЕНИЕ: Простой импорт ---
 import json
 from flask import Flask, request
 from telebot import types
@@ -22,29 +16,30 @@ SERVICE_ACCOUNT_KEY_JSON = os.environ.get('SERVICE_ACCOUNT_KEY_JSON')
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Работа с YDB (с изменениями) ---
+# --- Работа с YDB (НОВАЯ, УПРОЩЕННАЯ ВЕРСИЯ) ---
 def get_ydb_driver():
-    # Используем импортированные функции
-    credentials = construct_credentials_from_service_account_key(SERVICE_ACCOUNT_KEY_JSON)
-    driver_config = DriverConfig(
+    # Используем простой конструктор с сервисным ключом
+    return ydb.Driver(
         endpoint=YDB_ENDPOINT,
         database=YDB_DATABASE,
-        credentials=credentials
+        credentials=ydb.iam_credentials_from_str(SERVICE_ACCOUNT_KEY_JSON)
     )
-    return Driver(driver_config)
 
 def execute_ydb_query(query, params):
     driver = get_ydb_driver()
     driver.wait(timeout=5)
-    # --- ИЗМЕНЕНИЕ: Используем with, это более надежно ---
-    with Driver(get_ydb_driver().endpoint, get_ydb_driver().database, get_ydb_driver().credentials) as driver:
-       with Ydb(driver) as ydb_client:
-          session = ydb_client.table_client.session().create()
-          prepared_query = session.prepare(query)
-          session.transaction().execute(prepared_query, params, commit_tx=True)
+    
+    # Новый, более простой способ работы с сессией
+    with ydb.SessionPool(driver) as pool:
+        return pool.retry_operation_sync(
+            lambda session: session.transaction().execute(
+                query,
+                params,
+                commit_tx=True
+            )
+        )
 
-
-# ... (Остальной код бота, вебхука и обработчиков остается таким же, как в прошлый раз) ...
+# ... (Остальной код бота НИКАК НЕ МЕНЯЕТСЯ) ...
 
 # --- Веб-сервер и Вебхук ---
 @app.route('/', methods=['POST'])
@@ -57,21 +52,25 @@ def webhook():
 # --- Главная логика бота ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Я на Render V3! Пытаюсь записать в базу...")
+    bot.reply_to(message, "Я на Render V4! Финальная версия. Пытаюсь записать в базу...")
     try:
+        # Для новой библиотеки YDB нужно явно указывать тип параметра
         query = """
             DECLARE $telegram_id AS Uint64;
-            UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 3000);
+            UPSERT INTO users (telegram_id, goal_chars) VALUES ($telegram_id, 4000);
         """
-        params = {'$telegram_id': int(message.from_user.id)}
+        # Создаем типизированный параметр
+        param_type = ydb.PrimitiveType.Uint64
+        params = {'$telegram_id': ydb.TypedValue(int(message.from_user.id), param_type)}
+
         execute_ydb_query(query, params)
-        bot.send_message(message.chat.id, "Тестовая запись V3 прошла успешно!")
+        bot.send_message(message.chat.id, "Тестовая запись V4 прошла успешно!")
     except Exception as e:
-        bot.send_message(message.chat.id, f"Ошибка V3 при записи в базу: {e}")
+        bot.send_message(message.chat.id, f"Ошибка V4 при записи в базу: {e}")
 
 # --- Запуск ---
 if __name__ == '__main__':
-    WEBHOOK_URL = f"{os.environ.get('RENDER_EXTERNAL_URL')}"
+    WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL')
     if WEBHOOK_URL:
         bot.remove_webhook()
         bot.set_webhook(url=WEBHOOK_URL)
