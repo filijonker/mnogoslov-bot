@@ -16,13 +16,12 @@ SERVICE_ACCOUNT_KEY_JSON = os.environ.get('SERVICE_ACCOUNT_KEY_JSON')
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Работа с YDB (НОВАЯ, УПРОЩЕННАЯ ВЕРСИЯ) ---
 def get_ydb_driver():
-    # Используем простой конструктор с сервисным ключом
+    # --- ИЗМЕНЕНИЕ: Правильный способ аутентификации для нового SDK ---
     return ydb.Driver(
         endpoint=YDB_ENDPOINT,
         database=YDB_DATABASE,
-        credentials=ydb.iam_credentials_from_str(SERVICE_ACCOUNT_KEY_JSON)
+        credentials=ydb.credentials_from_str(SERVICE_ACCOUNT_KEY_JSON)
     )
 
 def execute_ydb_query(query, params):
