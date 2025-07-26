@@ -5,6 +5,7 @@ import ydb.iam
 import json
 from flask import Flask, request
 from telebot import types
+import requests
 
 # --- Настройки ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
