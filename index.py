@@ -37,7 +37,7 @@ def get_ydb_driver():
 # execute_ydb_query остается таким же, как в v4.2
 def execute_ydb_query(query, params):
     driver = get_ydb_driver()
-    driver.wait(timeout=5)
+    driver.wait(timeout=15)
     with ydb.SessionPool(driver) as pool:
         return pool.retry_operation_sync(
             lambda session: session.transaction().execute(
