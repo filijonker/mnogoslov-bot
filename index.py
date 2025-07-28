@@ -64,7 +64,10 @@ def set_user_state(chat_id, state):
     """Устанавливает состояние пользователя в базе данных."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO users (telegram_id, state) VALUES (?, ?)", (chat_id, state))
+    # ИЗМЕНЕНИЕ: Используем INSERT OR IGNORE, чтобы не затирать существующие данные,
+    # а потом UPDATE, чтобы установить состояние.
+    cursor.execute("INSERT OR IGNORE INTO users (telegram_id) VALUES (?)", (chat_id,))
+    cursor.execute("UPDATE users SET state = ? WHERE telegram_id = ?", (state, chat_id))
     conn.commit()
     conn.close()
 
@@ -116,9 +119,95 @@ def goal_handler(message):
     except Exception as e:
         bot.send_message(chat_id, f"Произошла ошибка при сохранении цели: {e}")
 
-# ... (здесь будут остальные обработчики: /stats, /done и т.д.) ...
-# Пока давай убедимся, что этот код работает.
+@bot.message_handler(commands=['stats'])
+def stats_handler(message):
+    chat_id = message.chat.id
+    try:
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
+        result = cursor.fetchone()
+        conn.close()
 
+        if result and result[1] is not None:
+            progress, goal = result
+            percentage = (progress / goal * 100) if goal > 0 else 0
+            remaining = goal - progress
+            
+            stats_text = f"""
+            📊 *Ваша статистика:*\n
+            *Цель:* {goal:,} знаков
+            *Написано:* {progress:,} знаков
+            *Осталось:* {remaining:,} знаков
+            *Выполнено:* {percentage:.1f}%
+            """
+            bot.send_message(chat_id, dedent(stats_text), parse_mode="Markdown")
+        else:
+            bot.send_message(chat_id, "Сначала установите цель с помощью команды /start.")
+    except Exception as e:
+        bot.send_message(chat_id, f"Произошла ошибка при получении статистики: {e}")
+
+@bot.message_handler(commands=['inspiration'])
+def inspiration_handler(message):
+    prompts = [
+        "Твой персонаж находит загадочный артефакт. Что это?",
+        "Опиши закат глазами человека, который видит его в последний раз.",
+        "Начни историю с фразы: 'Это была плохая идея с самого начала...'",
+        "Два врага заперты в одной комнате. У них есть час, чтобы договориться.",
+        "Цитата: 'Начинай писать, неважно о чем. Главное — двигать ручкой.' — Рэй Брэдбери",
+        "Цитата: 'Секрет успеха — начать.' — Марк Твен"
+    ]
+    prompt = random.choice(prompts)
+    bot.send_message(message.chat.id, f"✨ *Идея для тебя:*\n\n_{prompt}_", parse_mode="Markdown")
+
+@bot.message_handler(commands=['help'])
+def help_handler(message):
+    help_text = """
+    *Привет! Я бот Многослов. Вот что я умею:*\n
+    /start - Начать работу и установить новую цель.
+    /stats - Показать твой текущий прогресс.
+    /done `[число]` - Записать `число` написанных знаков (например: `/done 2000`).
+    /inspiration - Получить случайную идею или цитату для вдохновения.
+    /help - Показать это сообщение.
+    """
+    bot.send_message(chat_id, dedent(help_text), parse_mode="Markdown")
+
+@bot.message_handler(commands=['done'])
+def done_handler(message):
+    chat_id = message.chat.id
+    try:
+        args = message.text.split()
+        if len(args) < 2:
+            raise ValueError("Не указано количество знаков.")
+            
+        added_chars = int(args[1])
+        
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # Проверяем, есть ли у пользователя цель
+        cursor.execute("SELECT goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
+        if cursor.fetchone() is None:
+            bot.send_message(chat_id, "Похоже, у тебя еще не установлена цель. Начни с команды /start.")
+            conn.close()
+            return
+
+        # Обновляем прогресс
+        cursor.execute("UPDATE users SET current_progress = current_progress + ? WHERE telegram_id = ?", (added_chars, chat_id))
+        
+        # Получаем новый прогресс и цель
+        cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
+        progress, goal = cursor.fetchone()
+        conn.commit()
+        conn.close()
+
+        percentage = (progress / goal * 100) if goal > 0 else 0
+        bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress:,} / {goal:,} знаков ({percentage:.1f}%).")
+        
+    except ValueError:
+        bot.send_message(chat_id, "Неверный формат. Используй: `/done 1500`")
+    except Exception as e:
+        bot.send_message(chat_id, f"Произошла ошибка: {e}")
 
 # --- Запуск ---
 if __name__ == '__main__':
