@@ -4,9 +4,8 @@ import sqlite3
 import json
 from flask import Flask, request
 from telebot import types
-import datetime
 import random
-from textwrap import dedent # Добавлен импорт для красивого текста помощи
+from textwrap import dedent
 
 # --- Настройки ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -41,6 +40,7 @@ def webhook():
     update = telebot.types.Update.de_json(json_str)
     bot.process_new_updates([update])
     return 'ok', 200
+
 # --- Главная логика бота ---
 
 # Словарь для хранения состояний диалога
@@ -49,7 +49,6 @@ user_states = {}
 @bot.message_handler(commands=['start'])
 def start_handler(message):
     chat_id = message.chat.id
-    # Твой отличный новый текст!
     welcome_text = """
     *✍️ Привет, я Многослов. Моя задача: помочь тебе написать книгу. Что я умею:*\n
     - Помогу установить цель по количеству знаков и рассчитать, сколько времени потребуется для её достижения
@@ -59,41 +58,30 @@ def start_handler(message):
     Начнём?
     """
     
-    # Создаем кнопку "Поставить цель"
     markup = types.InlineKeyboardMarkup()
     button_begin = types.InlineKeyboardButton("Поставить цель 🎯", callback_data="begin_setup")
     markup.add(button_begin)
     
-    # Отправляем только ОДНО сообщение с текстом и кнопкой.
-    # Мы не отправляем фото, так как ты этого не хотела.
     bot.send_message(chat_id, dedent(welcome_text), reply_markup=markup, parse_mode="Markdown")
-    
-    # ВАЖНО: Мы НЕ меняем состояние пользователя здесь. Мы ждем, пока он нажмет кнопку.
 
 # Обработчик для кнопки "Поставить цель"
 @bot.callback_query_handler(func=lambda call: call.data == 'begin_setup')
 def begin_setup_callback(call):
     chat_id = call.message.chat.id
     
-    # Можно отредактировать старое сообщение, чтобы было красивее
     bot.edit_message_text(
         chat_id=chat_id, 
         message_id=call.message.message_id, 
-        text="Отлично! Приступим."
+        text="Отлично! Приступим.",
+        reply_markup=None # Убираем кнопки после нажатия
     )
     
-    # А уже в новом сообщении задаем вопрос
     bot.send_message(chat_id, "Сколько всего знаков должно быть в твоей книге? (Например: 360000)")
-    
-    # И только ТЕПЕРЬ мы устанавливаем состояние, когда ждем ответа
     user_states[chat_id] = 'awaiting_goal'
 
-# Обработчик для ответа на вопрос о цели (этот код у тебя уже есть, он идет после)
-@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == 'awaiting_goal')
-def goal_handler(message):
-    # ... твой код goal_handler без изменений ...
 
 # --- НОВЫЙ БЛОК КОМАНД ИЗ МЕНЮ ---
+
 @bot.message_handler(commands=['stats'])
 def stats_handler(message):
     chat_id = message.chat.id
@@ -111,11 +99,12 @@ def stats_handler(message):
             
             stats_text = f"""
             📊 *Ваша статистика:*\n
-            *Цель:* {goal} знаков
-            *Написано:* {progress} знаков
-            *Осталось:* {remaining} знаков
+            *Цель:* {goal:,} знаков
+            *Написано:* {progress:,} знаков
+            *Осталось:* {remaining:,} знаков
             *Выполнено:* {percentage:.1f}%
             """
+            # Добавил {:,} для красивого разделения тысяч в числах
             bot.send_message(chat_id, dedent(stats_text), parse_mode="Markdown")
         else:
             bot.send_message(chat_id, "Сначала установите цель с помощью команды /start, чтобы я мог показать вашу статистику.")
@@ -145,7 +134,7 @@ def help_handler(message):
     /inspiration - Получить случайную идею или цитату для вдохновения.
     /help - Показать это сообщение.
     """
-    bot.send_message(message.chat.id, dedent(help_text), parse_mode="Markdown")
+    bot.send_message(chat_id, dedent(help_text), parse_mode="Markdown")
 
 # --- КОНЕЦ НОВОГО БЛОКА ---
 
@@ -161,7 +150,7 @@ def goal_handler(message):
         conn.commit()
         conn.close()
         
-        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal}* знаков. Теперь ты можешь записывать свой прогресс командой `/done [число]`. Удачи!", parse_mode="Markdown")
+        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Теперь ты можешь записывать свой прогресс командой `/done [число]`. Удачи!", parse_mode="Markdown")
         user_states.pop(chat_id, None) # Завершаем диалог
     except ValueError:
         bot.send_message(chat_id, "Пожалуйста, введи число (например, 360000).")
@@ -191,7 +180,7 @@ def done_handler(message):
         conn.close()
 
         percentage = (progress / goal * 100) if goal > 0 else 0
-        bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress} / {goal} знаков ({percentage:.1f}%).")
+        bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress:,} / {goal:,} знаков ({percentage:.1f}%).")
         
     except ValueError:
         bot.send_message(chat_id, "Неверный формат. Используй: `/done 1500`")
@@ -206,9 +195,11 @@ if __name__ == '__main__':
     
     WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL')
     if WEBHOOK_URL:
+        # Устанавливаем вебхук при старте
         bot.remove_webhook()
+        # Для отладки можно временно не устанавливать вебхук, а работать через polling
         bot.set_webhook(url=WEBHOOK_URL)
         print(f"Вебхук установлен на {WEBHOOK_URL}")
     
+    # Запускаем наш веб-сервер
     app.run(host='0.0.0.0', port=PORT)
-
