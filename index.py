@@ -12,6 +12,12 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
 DB_NAME = 'bot_database.db' # Имя файла нашей базы данных
 
+# --- НОВОЕ МЕСТО ДЛЯ СОСТОЯНИЙ ---
+# Мы больше не используем словарь user_states.
+# Но нам нужно знать, какие состояния бывают.
+# Эта строчка ни на что не влияет, но помогает нам не запутаться.
+AWAITING_GOAL, AWAITING_SCHEDULE_DAYS, AWAITING_SCHEDULE_TIME = "awaiting_goal", "awaiting_schedule_days", "awaiting_schedule_time"
+
 # --- Инициализация ---
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
