@@ -107,23 +107,71 @@ def begin_setup_callback(call):
     bot.send_message(chat_id, "Сколько всего знаков должно быть в твоей книге? (Например: 360000)")
     set_user_state(chat_id, 'awaiting_goal')
 
-@bot.message_handler(func=lambda message: get_user_state(message.chat.id) == 'awaiting_goal')
+@bot.message_handler(func=lambda message: get_user_state(message.chat.id) == AWAITING_GOAL)
 def goal_handler(message):
     chat_id = message.chat.id
     try:
         goal = int(message.text)
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
-        # Обновляем цель для существующего пользователя
-        cursor.execute("UPDATE users SET goal_chars = ?, current_progress = 0, state = NULL WHERE telegram_id = ?", (goal, chat_id))
+        cursor.execute("UPDATE users SET goal_chars = ?, current_progress = 0 WHERE telegram_id = ?", (goal, chat_id))
         conn.commit()
         conn.close()
         
-        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Теперь ты можешь записывать свой прогресс командой `/done [число]`. Удачи!", parse_mode="Markdown")
-    except ValueError:
+        # --- ИЗМЕНЕНИЕ ---
+        # Создаем кнопки "Да/Нет" для настройки расписания
+        markup = types.InlineKeyboardMarkup()
+        button_yes = types.InlineKeyboardButton("Да, настроить ⏰", callback_data="setup_schedule_yes")
+        button_no = types.InlineKeyboardButton("Нет, спасибо", callback_data="setup_schedule_no")
+        markup.add(button_yes, button_no)
+
+        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Хочешь настроить ежедневные напоминания?", reply_markup=markup, parse_mode="Markdown")
+        # Мы не меняем состояние, ждем нажатия кнопки
+        
+    except (ValueError, TypeError):
         bot.send_message(chat_id, "Пожалуйста, введи число (например, 360000).")
     except Exception as e:
         bot.send_message(chat_id, f"Произошла ошибка при сохранении цели: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('setup_schedule_'))
+def schedule_setup_callback(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=call.message.text, reply_markup=None)
+
+    if call.data == 'setup_schedule_yes':
+        bot.send_message(chat_id, "В какие дни недели тебе напоминать? Отправь номера дней через запятую (например: 1,3,5 для Пн, Ср, Пт).")
+        set_user_state(chat_id, AWAITING_SCHEDULE_DAYS)
+    elif call.data == 'setup_schedule_no':
+        bot.send_message(chat_id, "Хорошо! Ты всегда можешь настроить напоминания позже. Удачи в написании книги!")
+        set_user_state(chat_id, None) # Сбрасываем состояние
+
+@bot.message_handler(func=lambda message: get_user_state(message.chat.id) == AWAITING_SCHEDULE_DAYS)
+def schedule_days_handler(message):
+    chat_id = message.chat.id
+    days = message.text
+    # Здесь можно добавить проверку, что введены корректные дни, но пока упростим
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET schedule_days = ? WHERE telegram_id = ?", (days, chat_id))
+    conn.commit()
+    conn.close()
+
+    bot.send_message(chat_id, "Отлично. А теперь введи желаемое время для напоминаний в формате ЧЧ:ММ (например, 09:00 или 21:30).")
+    set_user_state(chat_id, AWAITING_SCHEDULE_TIME)
+
+@bot.message_handler(func=lambda message: get_user_state(message.chat.id) == AWAITING_SCHEDULE_TIME)
+def schedule_time_handler(message):
+    chat_id = message.chat.id
+    time = message.text
+    # Здесь тоже нужна проверка формата времени, но пока опустим
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET schedule_time = ?, reminders_on = 1 WHERE telegram_id = ?", (time, chat_id))
+    conn.commit()
+    conn.close()
+
+    bot.send_message(chat_id, f"Супер! Я буду напоминать тебе в *{time}* по выбранным дням. Удачи!", parse_mode="Markdown")
+    set_user_state(chat_id, None) # Завершаем диалог
 
 @bot.message_handler(commands=['stats'])
 def stats_handler(message):
