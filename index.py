@@ -22,17 +22,20 @@ AWAITING_GOAL, AWAITING_SCHEDULE_DAYS, AWAITING_SCHEDULE_TIME = "awaiting_goal",
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Работа с базой данных SQLite ---
 def init_db():
     """Создает таблицу в базе данных, если она еще не существует."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     cursor = conn.cursor()
+    # --- ИСПРАВЛЕНИЕ: Добавляем все нужные колонки ---
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
             state TEXT,
             goal_chars INTEGER,
-            current_progress INTEGER DEFAULT 0
+            current_progress INTEGER DEFAULT 0,
+            schedule_days TEXT,
+            schedule_time TEXT,
+            reminders_on INTEGER DEFAULT 0
         )
     ''')
     conn.commit()
