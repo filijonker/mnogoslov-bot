@@ -3,126 +3,148 @@ import telebot
 import sqlite3
 import json
 from flask import Flask, request
-from telebot import types, TeleBot
-from telebot.handler_backends import State, StatesGroup
-from telebot.storage import StateMemoryStorage
-from textwrap import dedent
+from telebot import types
 import random
+from textwrap import dedent
 
 # --- Настройки ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
-DB_NAME = 'bot_database.db'
+DB_NAME = 'bot_database.db' 
 
-# --- Инициализация с FSM ---
-state_storage = StateMemoryStorage()
-bot = TeleBot(BOT_TOKEN, state_storage=state_storage, parse_mode='Markdown')
+# --- Инициализация ---
+bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- База данных ---
+# --- Работа с базой данных SQLite ---
 def init_db():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute('CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, goal_chars INTEGER, current_progress INTEGER DEFAULT 0)')
+    # Упрощенная таблица без полей для напоминаний
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            telegram_id INTEGER PRIMARY KEY,
+            goal_chars INTEGER,
+            current_progress INTEGER DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
 
-# --- Вспомогательная функция для времени ---
 def get_time_string(weeks_needed):
-    if weeks_needed is None or weeks_needed <= 0: return "мгновенно (или проверьте введенные данные)"
+    """Превращает недели в красивую строку (недели, месяцы, годы)."""
+    if weeks_needed is None or weeks_needed <= 0:
+        return "мгновенно (или проверьте введенные данные)"
+    
     if weeks_needed > 52:
         years = round(weeks_needed / 52, 1)
         return f"примерно {years} г." if years < 5 else f"примерно {years} лет"
     elif weeks_needed > 4:
-        months = round(weeks_needed / 4.34, 1)
+        months = round(weeks_needed / 4.34, 1) # ~4.34 недели в месяце
         return f"примерно {months} мес."
     else:
         weeks = round(weeks_needed)
         if weeks == 1: return "1 неделя"
         return f"{weeks} недели"
 
-# --- Вебхук ---
+# --- Веб-сервер и Вебхук ---
 @app.route('/', methods=['POST'])
 def process_webhook():
-    try:
-        json_str = request.get_data().decode('utf-8')
-        update = types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-        return 'ok', 200
-    except Exception as e:
-        print(f"Webhook error: {e}")
-        return 'error', 500
+    json_str = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'ok', 200
 
-# --- Состояния диалога ---
-class DialogStates(StatesGroup):
-    awaiting_goal = State()
-    awaiting_days = State()
-    awaiting_chars = State()
+# --- Главная логика бота ---
+user_states = {} # Простой словарь для короткого диалога
 
-# --- Обработчик /start ---
 @bot.message_handler(commands=['start'])
 def start_handler(message):
     chat_id = message.chat.id
-    welcome_text = "*Я — бот-помощник *Многослов*. Моя задача — помочь тебе написать книгу...\n\n...Теперь введи числом, сколько знаков будет в твоей книге?"
-    bot.send_message(chat_id, dedent(welcome_text))
-    bot.set_state(message.from_user.id, DialogStates.awaiting_goal, chat_id)
+    welcome_text = """
+    *✍️ Привет! Я бот «Многослов».*
 
-# --- Обработчики состояний диалога ---
-@bot.message_handler(state=DialogStates.awaiting_goal)
+    Я помогаю отслеживать писательский прогресс и заканчивать рукописи. Для начала давай поставим цель.
+    
+    Сколько знаков ты хочешь написать в рукопись?
+    """
+    bot.send_message(chat_id, dedent(welcome_text), parse_mode="Markdown")
+    user_states[chat_id] = 'awaiting_goal'
+
+# Этот обработчик остается таким же
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id) == 'awaiting_goal')
 def goal_handler(message):
+    chat_id = message.chat.id
     try:
         goal = int(message.text)
-        with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-            data['goal_chars'] = goal
-        bot.send_message(message.chat.id, "Отлично! А сколько дней в неделю ты планируешь писать?")
-        bot.set_state(message.from_user.id, DialogStates.awaiting_days, message.chat.id)
+        # Сохраняем цель во временный словарь, чтобы потом все вместе записать в базу
+        user_states[chat_id] = {
+            'state': 'awaiting_days_per_week',
+            'goal_chars': goal
+        }
+        bot.send_message(chat_id, "Отлично! А сколько дней в неделю ты планируешь писать?")
     except ValueError:
-        bot.send_message(message.chat.id, "Пожалуйста, введи число.")
+        bot.send_message(chat_id, "Пожалуйста, введи число.")
 
-@bot.message_handler(state=DialogStates.awaiting_days)
+# НОВЫЙ ОБРАБОТЧИК для дней в неделю
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_days_per_week')
 def days_handler(message):
+    chat_id = message.chat.id
     try:
         days = int(message.text)
-        with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-            data['days_per_week'] = days
-        bot.send_message(message.chat.id, "Понял. А сколько знаков за одну сессию?")
-        bot.set_state(message.from_user.id, DialogStates.awaiting_chars, message.chat.id)
+        user_states[chat_id]['days_per_week'] = days
+        user_states[chat_id]['state'] = 'awaiting_chars_per_session'
+        bot.send_message(chat_id, "Понял. А сколько знаков за одну сессию?")
     except ValueError:
-        bot.send_message(message.chat.id, "Пожалуйста, введи число (например, 7).")
+        bot.send_message(chat_id, "Пожалуйста, введи число (например, 7).")
 
-@bot.message_handler(state=DialogStates.awaiting_chars)
+# НОВЫЙ ОБРАБОТЧИК для знаков за сессию (здесь происходит расчет)
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_chars_per_session')
 def chars_handler(message):
     chat_id = message.chat.id
     try:
-        with bot.retrieve_data(message.from_user.id, chat_id) as data:
-            goal = data['goal_chars']
-            days = data['days_per_week']
-        
+        # Получаем все данные из нашего временного словаря
+        session_data = user_states[chat_id]
+        goal = session_data['goal_chars']
+        days = session_data['days_per_week']
         chars_per_session = int(message.text)
+
+        # Расчет
         chars_per_week = days * chars_per_session
         weeks_needed = goal / chars_per_week if chars_per_week > 0 else None
         time_str = get_time_string(weeks_needed)
 
-        final_text = f"""*Отлично, твой план готов!*\n\nТвоя цель: *{goal:,}* знаков.\nТы планируешь писать *{days}* раз в неделю по *{chars_per_session:,}* знаков.\n\nПри таком темпе, тебе потребуется *{time_str}*.\n\nЯ сохранил твою цель. Удачи!"""
-        bot.send_message(chat_id, dedent(final_text))
+        # Формируем финальное сообщение
+        final_text = f"""
+        *Отлично, твой план готов!*
+        
+        Твоя цель: *{goal:,}* знаков.
+        Ты планируешь писать *{days}* раз в неделю по *{chars_per_session:,}* знаков.
+        
+        При таком темпе, чтобы написать книгу, тебе потребуется *{time_str}*.
+        
+        Я сохранил твою цель. Удачи! Теперь можешь записывать прогресс командой `/done [число]`.
+        """
+        
+        bot.send_message(chat_id, dedent(final_text), parse_mode="Markdown")
 
+        # Теперь сохраняем основную информацию в базу
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO users (telegram_id, goal_chars, current_progress) VALUES (?, ?, 0)", (chat_id, goal))
         conn.commit()
         conn.close()
+        
+        # Завершаем диалог
+        user_states.pop(chat_id, None)
 
-        bot.delete_state(message.from_user.id, chat_id)
     except (ValueError, KeyError):
-        bot.send_message(chat_id, "Что-то пошло не так. /start")
-        bot.delete_state(message.from_user.id, chat_id)
+        bot.send_message(chat_id, "Что-то пошло не так. Давай начнем сначала? /start")
 
 # --- Команды из меню ---
-# state="*" означает, что команды сработают из любого состояния, прервав диалог
-@bot.message_handler(state="*", commands=['stats'])
+
+@bot.message_handler(commands=['stats'])
 def stats_handler(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
-    # ... (твой код для /stats)
     chat_id = message.chat.id
     try:
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -133,58 +155,65 @@ def stats_handler(message):
         if result and result[1] is not None:
             progress, goal = result
             percentage = (progress / goal * 100) if goal > 0 else 0
-            stats_text = f"📊 *Ваша статистика:*\n\n*Написано:* {progress:,} / {goal:,} знаков\n*Выполнено:* {percentage:.1f}%"
-            bot.send_message(chat_id, dedent(stats_text))
+            remaining = goal - progress
+            stats_text = f"""📊 *Ваша статистика:*\n\n*Цель:* {goal:,} знаков\n*Написано:* {progress:,} знаков\n*Осталось:* {remaining:,} знаков\n*Выполнено:* {percentage:.1f}%"""
+            bot.send_message(chat_id, dedent(stats_text), parse_mode="Markdown")
         else:
-            bot.send_message(chat_id, "Сначала установите цель: /start")
+            bot.send_message(chat_id, "Сначала установите цель с помощью команды /start.")
     except Exception as e:
-        bot.send_message(chat_id, f"Ошибка: {e}")
+        bot.send_message(chat_id, f"Произошла ошибка: {e}")
 
-@bot.message_handler(state="*", commands=['done'])
+@bot.message_handler(commands=['inspiration'])
+def inspiration_handler(message):
+    prompts = ["Твой персонаж находит загадочный артефакт. Что это?", "Опиши закат глазами человека, который видит его в последний раз.", "Начни историю с фразы: 'Это была плохая идея с самого начала...'"]
+    prompt = random.choice(prompts)
+    bot.send_message(message.chat.id, f"✨ *Идея для тебя:*\n\n_{prompt}_", parse_mode="Markdown")
+
+@bot.message_handler(commands=['help'])
+def help_handler(message):
+    help_text = """*Привет! Я бот Многослов. Вот что я умею:*\n\n/start - Начать работу и установить новую цель.\n/stats - Показать твой текущий прогресс.\n/done `[число]` - Записать `число` написанных знаков (например: `/done 2000`).\n/inspiration - Получить случайную идею или цитату для вдохновения."""
+    bot.send_message(chat_id, dedent(help_text), parse_mode="Markdown")
+
+@bot.message_handler(commands=['done'])
 def done_handler(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
-    # ... (твой код для /done)
     chat_id = message.chat.id
     try:
         args = message.text.split()
-        if len(args) < 2: raise ValueError()
+        if len(args) < 2: raise ValueError("Не указано количество знаков.")
         added_chars = int(args[1])
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
+        cursor.execute("SELECT goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
+        if cursor.fetchone() is None:
+            bot.send_message(chat_id, "Похоже, у тебя ещё не установлена цель. Начни с команды /start.")
+            conn.close()
+            return
         cursor.execute("UPDATE users SET current_progress = current_progress + ? WHERE telegram_id = ?", (added_chars, chat_id))
+        cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
+        progress, goal = cursor.fetchone()
         conn.commit()
         conn.close()
-        bot.send_message(chat_id, f"Отлично! {added_chars:,} знаков записано. Посмотреть прогресс: /stats")
-    except (ValueError, IndexError):
+        percentage = (progress / goal * 100) if goal > 0 else 0
+        bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress:,} / {goal:,} знаков ({percentage:.1f}%).")
+    except ValueError:
         bot.send_message(chat_id, "Неверный формат. Используй: `/done 1500`")
-
-@bot.message_handler(state="*", commands=['inspiration', 'help'])
-def inspiration_help_handler(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
-    if message.text.startswith('/inspiration'):
-         # ... (твой код для /inspiration)
-        prompts = ["Твой персонаж находит загадочный артефакт...", "Опиши закат глазами..."]
-        bot.send_message(message.chat.id, f"✨ *Идея для тебя:*\n\n_{random.choice(prompts)}_")
-    elif message.text.startswith('/help'):
-        # ... (твой код для /help)
-        help_text = "*Привет! Я бот Многослов...*"
-        bot.send_message(message.chat.id, dedent(help_text))
-
-# --- Обработчик неизвестных сообщений ---
-@bot.message_handler(state=None, func=lambda message: True)
-def unknown_handler(message):
-    bot.send_message(message.chat.id, "Я не совсем понял. Воспользуйся командами из /Меню.")
-
+    except Exception as e:
+        bot.send_message(chat_id, f"Произошла ошибка: {e}")
 
 # --- Запуск ---
 if __name__ == '__main__':
+    print("Инициализирую базу данных...")
     init_db()
+    print("База данных готова.")
     if 'RENDER' in os.environ:
+        print("Запускаю бота в режиме вебхука...")
         WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL')
-        bot.remove_webhook()
-        bot.set_webhook(url=WEBHOOK_URL)
-        print(f"Вебхук установлен на {WEBHOOK_URL}")
+        if WEBHOOK_URL:
+            bot.remove_webhook()
+            bot.set_webhook(url=WEBHOOK_URL)
+            print(f"Вебхук установлен на {WEBHOOK_URL}")
         app.run(host='0.0.0.0', port=PORT)
     else:
+        print("Запускаю бота в режиме polling...")
         bot.remove_webhook()
         bot.polling(none_stop=True)
