@@ -156,12 +156,6 @@ def chars_handler(message):
         user_states.pop(chat_id, None)
     except (ValueError, KeyError):
         bot.send_message(chat_id, "Что-то пошло не так. Давай начнем сначала? /start")
-        
-# --- И только в самом конце — обработчик "всего остального" ---
-@bot.message_handler(func=lambda message: True)
-def handle_unknown_messages(message):
-    unknown_text = """Хм, я не совсем понял. 🤔\n\nЯ пока умею отвечать только на команды из *Меню*. \n\nНажми /help, чтобы посмотреть список того, что я умею."""
-    bot.send_message(message.chat.id, dedent(unknown_text), parse_mode="Markdown")
 
 # --- Запуск (без изменений) ---
 if __name__ == '__main__':
