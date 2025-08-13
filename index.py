@@ -18,10 +18,9 @@ app = Flask(__name__)
 
 # --- Работа с базой данных SQLite ---
 def init_db():
-    # ВАЖНО: Так как у нас нет постоянного диска, база будет обнуляться при перезапуске.
-    # Для тестов и MVP это нормально.
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     cursor = conn.cursor()
+    # Упрощенная таблица без полей для напоминаний
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
@@ -41,8 +40,7 @@ def process_webhook():
     return 'ok', 200
 
 # --- Главная логика бота ---
-
-user_states = {} # Возвращаем простой словарь для диалога, так как он короткий
+user_states = {} # Простой словарь для короткого диалога
 
 @bot.message_handler(commands=['start'])
 def start_handler(message):
@@ -64,13 +62,13 @@ def goal_handler(message):
         goal = int(message.text)
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
-        # Создаем или обновляем запись пользователя с новой целью
         cursor.execute("INSERT OR REPLACE INTO users (telegram_id, goal_chars, current_progress) VALUES (?, ?, 0)", (chat_id, goal))
         conn.commit()
         conn.close()
         
+        # Простое завершение диалога, без кнопок и вопросов
         bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Теперь можешь отслеживать прогресс командой `/done [число]`. Удачи!", parse_mode="Markdown")
-        user_states.pop(chat_id, None) # Завершаем диалог
+        user_states.pop(chat_id, None) 
     except ValueError:
         bot.send_message(chat_id, "Пожалуйста, введи число (например, 360000).")
 
@@ -78,7 +76,6 @@ def goal_handler(message):
 
 @bot.message_handler(commands=['stats'])
 def stats_handler(message):
-    # Код для /stats остается без изменений
     chat_id = message.chat.id
     try:
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -86,12 +83,10 @@ def stats_handler(message):
         cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
         result = cursor.fetchone()
         conn.close()
-
         if result and result[1] is not None:
             progress, goal = result
             percentage = (progress / goal * 100) if goal > 0 else 0
             remaining = goal - progress
-            
             stats_text = f"""📊 *Ваша статистика:*\n\n*Цель:* {goal:,} знаков\n*Написано:* {progress:,} знаков\n*Осталось:* {remaining:,} знаков\n*Выполнено:* {percentage:.1f}%"""
             bot.send_message(chat_id, dedent(stats_text), parse_mode="Markdown")
         else:
@@ -101,45 +96,36 @@ def stats_handler(message):
 
 @bot.message_handler(commands=['inspiration'])
 def inspiration_handler(message):
-    # Код для /inspiration остается без изменений
     prompts = ["Твой персонаж находит загадочный артефакт. Что это?", "Опиши закат глазами человека, который видит его в последний раз.", "Начни историю с фразы: 'Это была плохая идея с самого начала...'"]
     prompt = random.choice(prompts)
     bot.send_message(message.chat.id, f"✨ *Идея для тебя:*\n\n_{prompt}_", parse_mode="Markdown")
 
 @bot.message_handler(commands=['help'])
 def help_handler(message):
-    # Код для /help остается без изменений
     help_text = """*Привет! Я бот Многослов. Вот что я умею:*\n\n/start - Начать работу и установить новую цель.\n/stats - Показать твой текущий прогресс.\n/done `[число]` - Записать `число` написанных знаков (например: `/done 2000`).\n/inspiration - Получить случайную идею или цитату для вдохновения."""
     bot.send_message(chat_id, dedent(help_text), parse_mode="Markdown")
 
 @bot.message_handler(commands=['done'])
 def done_handler(message):
-    # Код для /done остается без изменений
     chat_id = message.chat.id
     try:
         args = message.text.split()
         if len(args) < 2: raise ValueError("Не указано количество знаков.")
         added_chars = int(args[1])
-        
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
-        
         cursor.execute("SELECT goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
         if cursor.fetchone() is None:
             bot.send_message(chat_id, "Похоже, у тебя еще не установлена цель. Начни с команды /start.")
             conn.close()
             return
-
         cursor.execute("UPDATE users SET current_progress = current_progress + ? WHERE telegram_id = ?", (added_chars, chat_id))
-        
         cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
         progress, goal = cursor.fetchone()
         conn.commit()
         conn.close()
-
         percentage = (progress / goal * 100) if goal > 0 else 0
         bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress:,} / {goal:,} знаков ({percentage:.1f}%).")
-        
     except ValueError:
         bot.send_message(chat_id, "Неверный формат. Используй: `/done 1500`")
     except Exception as e:
@@ -150,7 +136,6 @@ if __name__ == '__main__':
     print("Инициализирую базу данных...")
     init_db()
     print("База данных готова.")
-    
     if 'RENDER' in os.environ:
         print("Запускаю бота в режиме вебхука...")
         WEBHOOK_URL = os.environ.get('RENDER_EXTERNAL_URL')
