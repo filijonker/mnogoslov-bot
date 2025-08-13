@@ -31,6 +31,22 @@ def init_db():
     conn.commit()
     conn.close()
 
+def get_time_string(weeks_needed):
+    """Превращает недели в красивую строку (недели, месяцы, годы)."""
+    if weeks_needed is None or weeks_needed <= 0:
+        return "мгновенно (или проверьте введенные данные)"
+    
+    if weeks_needed > 52:
+        years = round(weeks_needed / 52, 1)
+        return f"примерно {years} г." if years < 5 else f"примерно {years} лет"
+    elif weeks_needed > 4:
+        months = round(weeks_needed / 4.34, 1) # ~4.34 недели в месяце
+        return f"примерно {months} мес."
+    else:
+        weeks = round(weeks_needed)
+        if weeks == 1: return "1 неделя"
+        return f"{weeks} недели"
+
 # --- Веб-сервер и Вебхук ---
 @app.route('/', methods=['POST'])
 def process_webhook():
@@ -55,22 +71,75 @@ def start_handler(message):
     bot.send_message(chat_id, dedent(welcome_text), parse_mode="Markdown")
     user_states[chat_id] = 'awaiting_goal'
 
+# Этот обработчик остается таким же
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id) == 'awaiting_goal')
 def goal_handler(message):
     chat_id = message.chat.id
     try:
         goal = int(message.text)
+        # Сохраняем цель во временный словарь, чтобы потом все вместе записать в базу
+        user_states[chat_id] = {
+            'state': 'awaiting_days_per_week',
+            'goal_chars': goal
+        }
+        bot.send_message(chat_id, "Отлично! А сколько дней в неделю ты планируешь писать?")
+    except ValueError:
+        bot.send_message(chat_id, "Пожалуйста, введи число.")
+
+# НОВЫЙ ОБРАБОТЧИК для дней в неделю
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_days_per_week')
+def days_handler(message):
+    chat_id = message.chat.id
+    try:
+        days = int(message.text)
+        user_states[chat_id]['days_per_week'] = days
+        user_states[chat_id]['state'] = 'awaiting_chars_per_session'
+        bot.send_message(chat_id, "Понял. А сколько знаков за одну сессию?")
+    except ValueError:
+        bot.send_message(chat_id, "Пожалуйста, введи число (например, 7).")
+
+# НОВЫЙ ОБРАБОТЧИК для знаков за сессию (здесь происходит расчет)
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_chars_per_session')
+def chars_handler(message):
+    chat_id = message.chat.id
+    try:
+        # Получаем все данные из нашего временного словаря
+        session_data = user_states[chat_id]
+        goal = session_data['goal_chars']
+        days = session_data['days_per_week']
+        chars_per_session = int(message.text)
+
+        # Расчет
+        chars_per_week = days * chars_per_session
+        weeks_needed = goal / chars_per_week if chars_per_week > 0 else None
+        time_str = get_time_string(weeks_needed)
+
+        # Формируем финальное сообщение
+        final_text = f"""
+        *Отлично, твой план готов!*
+        
+        Твоя цель: *{goal:,}* знаков.
+        Ты планируешь писать *{days}* раз в неделю по *{chars_per_session:,}* знаков.
+        
+        При таком темпе, чтобы написать книгу, тебе потребуется *{time_str}*.
+        
+        Я сохранил твою цель. Удачи! Теперь можешь записывать прогресс командой `/done [число]`.
+        """
+        
+        bot.send_message(chat_id, dedent(final_text), parse_mode="Markdown")
+
+        # Теперь сохраняем основную информацию в базу
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO users (telegram_id, goal_chars, current_progress) VALUES (?, ?, 0)", (chat_id, goal))
         conn.commit()
         conn.close()
         
-        # Простое завершение диалога, без кнопок и вопросов
-        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Когда напишешь сколько-то знаков в рукопись, возвращайся сюда, чтобы отметить прогресс. Напиши команду`/done [количество знаков]`. Буду ждать тебя тут, удачи!", parse_mode="Markdown")
-        user_states.pop(chat_id, None) 
-    except ValueError:
-        bot.send_message(chat_id, "Пожалуйста, введи число (например, 360000).")
+        # Завершаем диалог
+        user_states.pop(chat_id, None)
+
+    except (ValueError, KeyError):
+        bot.send_message(chat_id, "Что-то пошло не так. Давай начнем сначала? /start")
 
 # --- Команды из меню ---
 
