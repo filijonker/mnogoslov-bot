@@ -48,9 +48,9 @@ def start_handler(message):
     welcome_text = """
     *✍️ Привет! Я бот «Многослов».*
 
-    Я помогу тебе дописать твою книгу. Для начала давай поставим цель.
+    Я помогаю отслеживать писательский прогресс и заканчивать рукописи. Для начала давай поставим цель.
     
-    Сколько знаков ты планируешь написать?
+    Сколько знаков ты хочешь написать в рукопись?
     """
     bot.send_message(chat_id, dedent(welcome_text), parse_mode="Markdown")
     user_states[chat_id] = 'awaiting_goal'
@@ -67,7 +67,7 @@ def goal_handler(message):
         conn.close()
         
         # Простое завершение диалога, без кнопок и вопросов
-        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Теперь можешь отслеживать прогресс командой `/done [число]`. Удачи!", parse_mode="Markdown")
+        bot.send_message(chat_id, f"Отлично! Твоя цель — *{goal:,}* знаков. Когда напишешь сколько-то знаков в рукопись, возвращайся сюда, чтобы отметить прогресс. Напиши команду`/done [количество знаков]`. Буду ждать тебя тут, удачи!", parse_mode="Markdown")
         user_states.pop(chat_id, None) 
     except ValueError:
         bot.send_message(chat_id, "Пожалуйста, введи число (например, 360000).")
@@ -116,7 +116,7 @@ def done_handler(message):
         cursor = conn.cursor()
         cursor.execute("SELECT goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
         if cursor.fetchone() is None:
-            bot.send_message(chat_id, "Похоже, у тебя еще не установлена цель. Начни с команды /start.")
+            bot.send_message(chat_id, "Похоже, у тебя ещё не установлена цель. Начни с команды /start.")
             conn.close()
             return
         cursor.execute("UPDATE users SET current_progress = current_progress + ? WHERE telegram_id = ?", (added_chars, chat_id))
