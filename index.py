@@ -180,4 +180,3 @@ if __name__ == '__main__':
         print("Запускаю бота в режиме polling...")
         bot.remove_webhook()
         bot.polling(none_stop=True)
-
