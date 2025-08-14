@@ -12,6 +12,24 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
 DB_NAME = 'bot_database.db' 
 
+# --- Вспомогательная функция для времени ---
+def get_time_string(weeks_needed):
+    """Превращает недели в красивую строку (недели, месяцы, годы)."""
+    if weeks_needed is None or weeks_needed <= 0:
+        return "мгновенно (или проверьте введенные данные)"
+    
+    if weeks_needed > 52:
+        years = round(weeks_needed / 52, 1)
+        return f"примерно {years} г." if years < 2 else f"примерно {years} лет"
+    elif weeks_needed > 4:
+        months = round(weeks_needed / 4.34, 1)
+        return f"примерно {months} мес."
+    else:
+        weeks = round(weeks_needed)
+        if weeks == 1: return "1 неделя"
+        if 2 <= weeks <= 4: return f"{weeks} недели"
+        return f"{weeks} недель"
+
 # --- Инициализация ---
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
