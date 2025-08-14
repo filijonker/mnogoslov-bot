@@ -94,25 +94,50 @@ def goal_handler(message):
     except ValueError:
         bot.send_message(chat_id, "Пожалуйста, введи число.")
 
-# НОВЫЙ ОБРАБОТЧИК для ответа про дни
 @bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_days_per_week')
 def days_handler(message):
+    chat_id = message.chat.id
+    try:
+        days = int(message.text)
+        # Просто добавляем данные в наш временный словарь
+        user_states[chat_id]['days_per_week'] = days
+        # Меняем состояние на следующее
+        user_states[chat_id]['state'] = 'awaiting_chars_per_session'
+        # Задаем последний вопрос
+        bot.send_message(chat_id, "Понял-принял. А сколько знаков за одну сессию?")
+    except ValueError:
+        bot.send_message(chat_id, "Пожалуйста, введи число (например, 7).")
+
+# НОВЫЙ ОБРАБОТЧИК для финального шага
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get('state') == 'awaiting_chars_per_session')
+def chars_handler(message):
     chat_id = message.chat.id
     try:
         # Получаем все данные из нашего временного словаря
         session_data = user_states[chat_id]
         goal = session_data['goal_chars']
-        days = int(message.text)
+        days = session_data['days_per_week']
+        chars_per_session = int(message.text)
 
-        # --- УПРОЩЕННЫЙ РАСЧЕТ (пока без знаков за сессию) ---
-        # Представим, что за сессию всегда пишется 2000 знаков
-        chars_per_session = 2000 
+        # --- НАСТОЯЩИЙ РАСЧЕТ ---
         chars_per_week = days * chars_per_session
         weeks_needed = (goal / chars_per_week) if chars_per_week > 0 else None
         time_str = get_time_string(weeks_needed)
         # --- КОНЕЦ РАСЧЕТА ---
 
-        bot.send_message(chat_id, f"Хорошо, если писать {days} раз в неделю, то это займет примерно {time_str}. (Это пока тестовый расчет).")
+        # Формируем финальное сообщение с полными данными
+        final_text = f"""
+        *Отлично, твой план готов!*
+        
+        Твоя цель: *{goal:,}* знаков.
+        Ты планируешь писать *{days}* раз в неделю по *{chars_per_session:,}* знаков.
+        
+        При таком темпе, чтобы написать книгу, тебе потребуется *{time_str}*.
+        
+        Я сохранил твою цель. Теперь, каждый раз, когда напишешь сколько-то знаков, возвращайся сюда и записывай прогресс командой `/done [кол-во знаков]`.
+        """
+        
+        bot.send_message(chat_id, dedent(final_text), parse_mode="Markdown")
         
         # Сохраняем цель в базу
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -124,8 +149,8 @@ def days_handler(message):
         # Завершаем диалог
         user_states.pop(chat_id, None)
 
-    except (ValueError, KeyError):
-        bot.send_message(chat_id, "Что-то пошло не так. Давай начнем сначала? /start")
+    except (ValueError, KeyError, TypeError):
+        bot.send_message(chat_id, "Что-то пошло не так. Давай начнём сначала? /start")
         user_states.pop(chat_id, None)
 
 # --- Команды из меню ---
