@@ -34,11 +34,12 @@ def get_time_string(weeks_needed):
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# --- Работа с базой данных SQLite ---
 def init_db():
+    """Создает таблицы в базе данных, если они еще не существуют."""
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     cursor = conn.cursor()
-    # Упрощенная таблица без полей для напоминаний
+    
+    # Создаем таблицу пользователей (как и раньше)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY,
@@ -46,6 +47,16 @@ def init_db():
             current_progress INTEGER DEFAULT 0
         )
     ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_achievements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER,
+            achievement_code TEXT,
+            received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
