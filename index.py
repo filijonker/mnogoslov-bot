@@ -30,6 +30,38 @@ def get_time_string(weeks_needed):
         if 2 <= weeks <= 4: return f"{weeks} недели"
         return f"{weeks} недель"
 
+ACHIEVEMENTS = {
+    'first_step': {
+        'type': 'once', # 'once' означает, что проверяется только один раз
+        'text': "🎉 *Поздравляю! Новое достижение: Первый шаг!*\n\nСамое сложное — начать, и ты это сделала. Так держать!"
+    },
+    'marathon_10k': {
+        'type': 'progress',
+        'value': 10000,
+        'text': "🏅 *Новое достижение: На марафоне!*\n\nТы преодолела рубеж в 10 000 знаков. Это впечатляет!"
+    },
+    'novella_50k': {
+        'type': 'progress',
+        'value': 50000,
+        'text': "📚 *Новое достижение: Размер повести!*\n\n50 000 знаков позади! Твоя история обретает форму."
+    },
+    'half_way': {
+        'type': 'percentage',
+        'value': 50, # 50%
+        'text': "🧭 *Новое достижение: Экватор!*\n\nПоловина пути пройдена! Самое трудное позади (наверное)."
+    },
+    'second_wind': { # Твоя ачивка!
+        'type': 'percentage',
+        'value': 90, # 90%
+        'text': "💨 *Новое достижение: Второе дыхание!*\n\nФинишная прямая! Остался последний рывок!"
+    },
+    'the_end': {
+        'type': 'percentage',
+        'value': 100, # 100%
+        'text': "🏆 *ПОЗДРАВЛЯЮ! ГЛАВНОЕ ДОСТИЖЕНИЕ: THE END!*\n\nТы сделала это! Ты дописала книгу. Время праздновать!"
+    }
+}
+
 # --- Инициализация ---
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -57,6 +89,41 @@ def init_db():
         )
     ''')
 
+    conn.commit()
+    conn.close()
+
+def check_and_send_achievements(chat_id, progress, goal):
+    """Проверяет и отправляет новые достижения пользователю."""
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # Получаем список уже полученных ачивок
+    cursor.execute("SELECT achievement_code FROM user_achievements WHERE telegram_id = ?", (chat_id,))
+    received_achievements = [row[0] for row in cursor.fetchall()]
+
+    newly_achieved = []
+
+    # Проверяем каждую ачивку из нашего каталога
+    for code, details in ACHIEVEMENTS.items():
+        if code not in received_achievements:
+            # Проверяем условие
+            condition_met = False
+            if details['type'] == 'progress' and progress >= details['value']:
+                condition_met = True
+            elif details['type'] == 'percentage' and (progress / goal * 100) >= details['value']:
+                condition_met = True
+            elif details['type'] == 'once' and 'first_step' not in received_achievements:
+                # 'first_step' выдается при первом /done, его проверим там же
+                pass
+
+            if condition_met:
+                newly_achieved.append((code, details['text']))
+    
+    # Отправляем и сохраняем новые ачивки
+    for code, text in newly_achieved:
+        bot.send_message(chat_id, text, parse_mode="Markdown")
+        cursor.execute("INSERT INTO user_achievements (telegram_id, achievement_code) VALUES (?, ?)", (chat_id, code))
+    
     conn.commit()
     conn.close()
 
@@ -204,20 +271,48 @@ def done_handler(message):
         args = message.text.split()
         if len(args) < 2: raise ValueError("Не указано количество знаков.")
         added_chars = int(args[1])
+        
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
         cursor = conn.cursor()
+        
+        # Проверяем, есть ли у пользователя цель
         cursor.execute("SELECT goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
-        if cursor.fetchone() is None:
-            bot.send_message(chat_id, "Похоже, у тебя ещё не установлена цель. Начни с команды /start.")
-            conn.close()
+        user_data = cursor.fetchone()
+        if user_data is None:
+            # ... (код для нового пользователя)
             return
+
+        # --- НОВЫЙ КОД для ачивки "Первый шаг" ---
+        cursor.execute("SELECT achievement_code FROM user_achievements WHERE telegram_id = ? AND achievement_code = 'first_step'", (chat_id,))
+        has_first_step = cursor.fetchone()
+        
+        # Обновляем прогресс
         cursor.execute("UPDATE users SET current_progress = current_progress + ? WHERE telegram_id = ?", (added_chars, chat_id))
+        
+        # Получаем новый прогресс и цель
         cursor.execute("SELECT current_progress, goal_chars FROM users WHERE telegram_id = ?", (chat_id,))
         progress, goal = cursor.fetchone()
         conn.commit()
         conn.close()
+
         percentage = (progress / goal * 100) if goal > 0 else 0
         bot.send_message(chat_id, f"Отличная работа! ✨\nТвой прогресс: {progress:,} / {goal:,} знаков ({percentage:.1f}%).")
+        
+        # --- ВЫЗЫВАЕМ ПРОВЕРКУ АЧИВОК ---
+        # Сначала проверяем "Первый шаг" отдельно
+        if not has_first_step:
+            first_step_data = ACHIEVEMENTS['first_step']
+            bot.send_message(chat_id, first_step_data['text'], parse_mode="Markdown")
+            # Записываем в базу, чтобы не выдать снова
+            conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO user_achievements (telegram_id, achievement_code) VALUES (?, ?)", (chat_id, 'first_step'))
+            conn.commit()
+            conn.close()
+
+        # Теперь проверяем все остальные ачивки
+        check_and_send_achievements(chat_id, progress, goal)
+        
     except ValueError:
         bot.send_message(chat_id, "Неверный формат. Используй: `/done 1500`")
     except Exception as e:
